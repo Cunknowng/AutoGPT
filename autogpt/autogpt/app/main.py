@@ -21,7 +21,11 @@ from forge.components.code_executor.code_executor import (
 )
 from forge.config.ai_directives import AIDirectives
 from forge.config.ai_profile import AIProfile
-from forge.config.config import Config, ConfigBuilder, assert_config_has_openai_api_key
+from forge.config.config import (
+    Config,
+    ConfigBuilder,
+    assert_config_has_required_llm_api_keys,
+)
 from forge.file_storage import FileStorageBackendName, get_storage
 from forge.llm.providers import MultiProvider
 from forge.logging.config import configure_logging
@@ -98,8 +102,7 @@ async def run_auto_gpt(
         tts_config=config.tts_config,
     )
 
-    # TODO: fill in llm values here
-    assert_config_has_openai_api_key(config)
+    await assert_config_has_required_llm_api_keys(config)
 
     await apply_overrides_to_config(
         config=config,
@@ -380,8 +383,7 @@ async def run_auto_gpt_server(
         tts_config=config.tts_config,
     )
 
-    # TODO: fill in llm values here
-    assert_config_has_openai_api_key(config)
+    await assert_config_has_required_llm_api_keys(config)
 
     await apply_overrides_to_config(
         config=config,
@@ -508,22 +510,25 @@ async def run_interaction_loop(
         ########
         handle_stop_signal()
         # Have the agent determine the next action to take.
-        with spinner:
-            try:
-                action_proposal = await agent.propose_action()
-            except InvalidAgentResponseError as e:
-                logger.warning(f"The agent's thoughts could not be parsed: {e}")
-                consecutive_failures += 1
-                if consecutive_failures >= 3:
-                    logger.error(
-                        "The agent failed to output valid thoughts"
-                        f" {consecutive_failures} times in a row. Terminating..."
-                    )
-                    raise AgentTerminated(
-                        "The agent failed to output valid thoughts"
-                        f" {consecutive_failures} times in a row."
-                    )
-                continue
+        if not (_ep := agent.event_history.current_episode) or _ep.result:
+            with spinner:
+                try:
+                    action_proposal = await agent.propose_action()
+                except InvalidAgentResponseError as e:
+                    logger.warning(f"The agent's thoughts could not be parsed: {e}")
+                    consecutive_failures += 1
+                    if consecutive_failures >= 3:
+                        logger.error(
+                            "The agent failed to output valid thoughts"
+                            f" {consecutive_failures} times in a row. Terminating..."
+                        )
+                        raise AgentTerminated(
+                            "The agent failed to output valid thoughts"
+                            f" {consecutive_failures} times in a row."
+                        )
+                    continue
+        else:
+            action_proposal = _ep.action
 
         consecutive_failures = 0
 
